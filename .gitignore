@@ -1,0 +1,23 @@
+# macOS
+.DS_Store
+._*
+
+# Local builds and SDK distribution
+/build/
+/dist/
+/sdk/
+*.app/
+*.dSYM/
+*.o
+*.dylib
+*.zip
+
+# Local configuration, credentials, logs and captured media
+.env
+.env.*
+!.env.example
+*.log
+/Captures/
+*.ARW
+*.HIF
+*.mov
