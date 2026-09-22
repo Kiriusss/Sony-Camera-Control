@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Sony Camera Control
+Name[zh_CN]=Sony 相机控制
+Comment=Live view and remote capture for Sony cameras
+Comment[zh_CN]=Sony 相机实时取景、遥控拍摄与照片直传
+Exec=sony-camera-control
+Icon=sony-camera-control
+Terminal=false
+Categories=Graphics;Photography;
+StartupWMClass=SonyCameraControl

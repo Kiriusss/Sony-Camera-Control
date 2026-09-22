@@ -1,6 +1,8 @@
 # Sony Camera Control
 
-面向 Sony Camera Remote SDK 支持机型的 macOS 原生桌面控制软件，使用 SwiftUI 和 Camera Remote SDK 2.02。提供遥控拍摄、照片直传、实时取景、原生连拍和手动调焦。
+面向 Sony Camera Remote SDK 支持机型的桌面控制软件，使用 Camera Remote SDK 2.02。macOS 版采用 SwiftUI，Windows 与 Debian/KDE 版采用 Qt。提供遥控拍摄、照片直传、实时取景、原生连拍和手动调焦。
+
+**Windows / Linux：** 从 [v1.3.0 Release](https://github.com/Kiriusss/Sony-Camera-Control/releases/tag/v1.3.0) 下载 x64 安装包。安装、SDK 驱动、构建与自动检查见 [桌面版说明](DESKTOP.md)，验证范围见 [桌面版验证记录](DESKTOP_VALIDATION.md)；下文原有实机记录属于 macOS 版本。
 
 ## 相机兼容性
 
@@ -18,7 +20,7 @@
 
 ## 安装与连接
 
-从本仓库 [Releases](https://github.com/Kiriusss/Sony-Camera-Control/releases) 下载 Apple silicon 安装包，解压后打开 `Sony Camera Control.app`。运行系统需满足所使用的 [Sony SDK 系统要求](https://support.d-imaging.sony.co.jp/app/sdk/en/index.html)。
+macOS 用户从本仓库 [v1.2.0 Release](https://github.com/Kiriusss/Sony-Camera-Control/releases/tag/v1.2.0) 下载 Apple silicon 安装包，解压后打开 `Sony Camera Control.app`。运行系统需满足所使用的 [Sony SDK 系统要求](https://support.d-imaging.sony.co.jp/app/sdk/en/index.html)。
 
 相机供电开机后，使用 USB 数据线连接电脑，并选择 **PC Remote**。软件会检查电脑保存设置，并配置相机支持的无卡释放选项。点击“搜索”和“连接相机”即可。
 

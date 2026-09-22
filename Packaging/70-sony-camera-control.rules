@@ -1,0 +1,4 @@
+# Sony still-image USB interfaces. Grant access only to the active local seat.
+# Reconnect the camera after installation. Do not run the GUI as root.
+SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="054c", IMPORT{builtin}="usb_id"
+SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="054c", ENV{ID_USB_INTERFACES}=="*:060101:*", TAG+="uaccess"

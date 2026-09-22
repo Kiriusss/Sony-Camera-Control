@@ -11,6 +11,11 @@
 *.o
 *.dylib
 *.zip
+__pycache__/
+*.py[cod]
+*.so
+*.dll
+*.lib
 
 # Local configuration, credentials, logs and captured media
 .env

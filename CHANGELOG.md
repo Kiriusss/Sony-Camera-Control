@@ -1,5 +1,14 @@
 # 更新记录
 
+## 1.3.0 · 2026-09-22
+
+- 新增 Windows x64 和 Debian/KDE x86_64 桌面版，使用 Qt 界面及可移植 C++ 相机控制层。
+- 保留实时取景、相机参数、照片直传、原生连拍、手动调焦与网络连接认证。
+- 提供 Windows ZIP、Debian DEB 和 Linux 目录包，包含 SDK 运行库、驱动/USB 权限配置及安装说明。
+- 新增跨平台构建、离线 SDK 状态机测试、界面测试及显式启用的实机测试工具。
+- Windows ILX-LR1 实测单拍、短连拍、取景与手动对焦；3 张 HEIF 完整解码。Debian 12 安装、普通用户启动及 WSLg X11/Wayland 检查通过；真实 KDE 会话及 Linux USB 拍摄尚未实测。
+- 本地预览录像使用 5 fps MJPEG AVI；macOS 原有 SwiftUI/MOV 实现保留，本轮不重新构建 macOS 安装包。
+
 ## 1.2.0 · 2026-09-22
 
 - 名称改为 Sony Camera Control，仓库公开。

@@ -1,0 +1,9 @@
+*.sh text eol=lf
+*.py text eol=lf
+*.cpp text eol=lf
+*.h text eol=lf
+*.desktop text eol=lf
+*.rules text eol=lf
+# Preserve upstream source and license formatting verbatim.
+ThirdParty/** -whitespace
+ThirdPartyLicenses/** -whitespace
