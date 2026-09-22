@@ -11,6 +11,10 @@
 #include <iostream>
 static std::mutex fakeMutex;
 static std::map<uint32_t,uint64_t> fakeValues;
+static std::set<uint32_t> fakeUnsupported,fakeReadOnly;
+static uint32_t fakeReadFailure=0;
+static bool allowMockConnect=false;
+static int mockConnectCalls=0;
 static std::atomic<int> downCalls{0},upCalls{0},releaseCalls{0},disconnectCalls{0};
 static NSString *lastSavePath=@"";
 static NSString *testDirectory=nil;
@@ -25,18 +29,28 @@ extern "C" CrError GetLiveViewImageInfo(CrDeviceHandle,CrImageInfo*){std::abort(
 extern "C" CrError SetDeviceSetting(CrDeviceHandle,CrInt32u,CrInt32u){std::abort();}
 extern "C" CrInt32u GetSDKVersion(){return 0;}
 extern "C" bool Init(CrInt32u){assert(false&&"Hardware initialization forbidden");return false;}
-extern "C" CrError Connect(ICrCameraObjectInfo*,IDeviceCallback*,CrDeviceHandle*,CrSdkControlMode,CrReconnectingSet,const char*,const char*,const char*,CrInt32u,const CrInt16u*){assert(false&&"Hardware connection forbidden");return CrError_Generic_Unknown;}
+extern "C" CrError Connect(ICrCameraObjectInfo *info,IDeviceCallback *callback,CrDeviceHandle *handle,CrSdkControlMode,CrReconnectingSet,const char*,const char*,const char*,CrInt32u,const CrInt16u*){
+    assert(allowMockConnect&&"Unexpected mock connection");assert(std::string(info->GetModel())=="ILCE-7M4");
+    ++mockConnectCalls;*handle=1;callback->OnConnected(DEVICE_CONNECTION_VERSION_RCP3);return 0;
+}
 extern "C" bool Release(){return true;}
 extern "C" CrError GetSelectDeviceProperties(CrDeviceHandle,CrInt32u n,CrInt32u *codes,CrDeviceProperty **out,CrInt32 *count){
-    std::lock_guard<std::mutex> lock(fakeMutex);*out=new CrDeviceProperty[n];*count=(int)n;
+    std::lock_guard<std::mutex> lock(fakeMutex);
+    for(unsigned i=0;i<n;++i)if(codes[i]==fakeReadFailure){*out=nullptr;*count=0;return CrError_Generic_Unknown;}
+    *out=new CrDeviceProperty[n];*count=(int)n;
     for(unsigned i=0;i<n;++i){auto &p=(*out)[i];p.SetCode(codes[i]);p.SetValueType(CrDataType_UInt32);p.SetPropertyEnableFlag(CrEnableValue_True);p.SetPropertyVariableFlag(CrEnableValue_Variable);p.SetCurrentValue(fakeValues[codes[i]]);
+        if(fakeUnsupported.count(codes[i]))p.SetPropertyEnableFlag(CrEnableValue_NotSupported);
+        if(fakeReadOnly.count(codes[i])){p.SetPropertyEnableFlag(CrEnableValue_DisplayOnly);p.SetPropertyVariableFlag(CrEnableValue_Invariable);}
         if(manualMetadata&&(codes[i]==CrDeviceProperty_FocusPositionSetting||codes[i]==CrDeviceProperty_FocusPositionCurrentValue)) {
             uint16_t range[]={0,65535,1};p.SetValueType(CrDataType_UInt16Range);p.SetValueSize(sizeof(range));auto *owned=new uint8_t[sizeof(range)];memcpy(owned,range,sizeof(range));p.SetValues(owned);
         }
     }
     return 0;
 }
-extern "C" CrError GetDeviceProperties(CrDeviceHandle,CrDeviceProperty **out,CrInt32 *count){*out=nullptr;*count=0;return 0;}
+extern "C" CrError GetDeviceProperties(CrDeviceHandle handle,CrDeviceProperty **out,CrInt32 *count){
+    std::vector<uint32_t> codes;{std::lock_guard<std::mutex> lock(fakeMutex);for(const auto &v:fakeValues)codes.push_back(v.first);}
+    return GetSelectDeviceProperties(handle,(uint32_t)codes.size(),codes.data(),out,count);
+}
 extern "C" CrError ReleaseDeviceProperties(CrDeviceHandle,CrDeviceProperty *p){delete[] p;return 0;}
 extern "C" CrError SetDeviceProperty(CrDeviceHandle,CrDeviceProperty *p){std::lock_guard<std::mutex> lock(fakeMutex);fakeValues[p->GetCode()]=p->GetCurrentValue();
     if(p->GetCode()==CrDeviceProperty_FocusPositionSetting)fakeValues[CrDeviceProperty_FocusDrivingStatus]=CrFocusDrivingStatus_Driving;
@@ -75,7 +89,7 @@ static NSDictionary *call(NSDictionary *request){
 }
 static void setup(){
     auto &s=state();std::lock_guard<std::mutex> lock(s.mutex);++s.epoch;s.initialized=s.connected=s.configured=true;s.connecting=false;s.handle=1;s.pendingPhoto=false;
-    s.burstActive=s.burstDraining=s.burstReleasePending=false;s.configurationError=@"";
+    s.burstActive=s.burstDraining=s.burstReleasePending=false;s.configurationError=@"";s.configurationInputs.clear();s.noCardConfirmed=false;
     s.saveDirectory=testDirectory;
     auto callback=std::make_unique<Callback>(s.epoch);s.callback=callback.get();s.callbacks.push_back(std::move(callback));
     setFake(CrDeviceProperty_ExposureProgramMode,CrExposure_Auto);setFake(CrDeviceProperty_ShutterSpeed,(1u<<16)|160);
@@ -90,6 +104,39 @@ static void downloaded(NSString *name){
 }
 static void captured(){state().callback->OnWarning(CrNotify_Captured_Event);}
 static void pause(int ms){std::this_thread::sleep_for(std::chrono::milliseconds(ms));}
+class MockCamera final:public ICrCameraObjectInfo {
+public:
+    void Release() override {}
+    CrChar *GetName() const override{return const_cast<char*>("Test camera");}
+    CrInt32u GetNameSize() const override{return 12;}
+    CrChar *GetModel() const override{return const_cast<char*>("ILCE-7M4");}
+    CrInt32u GetModelSize() const override{return 9;}
+    CrInt16 GetUsbPid() const override{return 0;}
+    CrInt8u *GetId() const override{return nullptr;}
+    CrInt32u GetIdSize() const override{return 0;}
+    CrInt32u GetIdType() const override{return 0;}
+    CrInt32u GetConnectionStatus() const override{return 0;}
+    CrChar *GetConnectionTypeName() const override{return const_cast<char*>("USB");}
+    CrChar *GetAdaptorName() const override{return const_cast<char*>("Mock");}
+    CrChar *GetGuid() const override{return nullptr;}
+    CrChar *GetPairingNecessity() const override{return nullptr;}
+    CrInt16u GetAuthenticationState() const override{return 0;}
+    CrInt32u GetSSHsupport() const override{return 0;}
+    CrInt32u GetIPAddress() const override{return 0;}
+    CrChar *GetIPAddressChar() const override{return nullptr;}
+    CrInt32u GetIPAddressCharSize() const override{return 0;}
+    CrInt8u *GetMACAddress() const override{return nullptr;}
+    CrInt32u GetMACAddressSize() const override{return 0;}
+    CrChar *GetMACAddressChar() const override{return nullptr;}
+    CrInt32u GetMACAddressCharSize() const override{return 0;}
+};
+class MockEnumeration final:public ICrEnumCameraObjectInfo {
+    MockCamera camera;
+public:
+    CrInt32u GetCount() const override{return 1;}
+    const ICrCameraObjectInfo *GetCameraObjectInfo(CrInt32u index) const override{return index==0?&camera:nullptr;}
+    void Release() override {}
+};
 int main(){@autoreleasepool{
     testDirectory=[NSTemporaryDirectory() stringByAppendingPathComponent:[@"LR1-CameraBridgeTests-" stringByAppendingString:NSUUID.UUID.UUIDString]];
     assert([[NSFileManager defaultManager] createDirectoryAtPath:testDirectory withIntermediateDirectories:YES attributes:nil error:nil]);
@@ -170,5 +217,61 @@ int main(){@autoreleasepool{
     assert([call(@{@"action":@"disconnect"})[@"ok"]boolValue]);
     assert(disconnectCalls==priorDisconnects+1&&releaseCalls==priorReleases+2);
     puts("PASS: initial OnError releases without Disconnect; previously connected session still waits for normal disconnection.");
+
+    setup();assert([call(@{@"action":@"shutdown"})[@"ok"]boolValue]);
+    MockEnumeration enumeration;
+    {std::lock_guard<std::mutex> lock(s.mutex);s.initialized=true;s.enumeration=&enumeration;}
+    allowMockConnect=true;
+    auto connection=call(@{@"action":@"connect",@"index":@0});
+    assert([connection[@"ok"]boolValue]&&[connection[@"connected"]boolValue]&&mockConnectCalls==1);
+    assert([connection[@"cameraName"]isEqual:@"ILCE-7M4"]);
+    fakeUnsupported.insert(CrDeviceProperty_ReleaseWithoutCard);
+    auto capability=call(@{@"action":@"status"});
+    assert([capability[@"photoReady"]boolValue]&&![capability[@"noCardConfirmed"]boolValue]);
+    assert(![call(@{@"action":@"movie_start"})[@"ok"]boolValue]);
+    int priorDowns=downCalls;
+    fakeUnsupported.insert(CrDeviceProperty_S2);
+    assert(![call(@{@"action":@"burst_start",@"mode":@"65543",@"duration":@0.5})[@"ok"]boolValue]);
+    assert(downCalls==priorDowns);fakeUnsupported.erase(CrDeviceProperty_S2);
+    fakeUnsupported.insert(CrDeviceProperty_SnapshotInfo);
+    assert(![call(@{@"action":@"burst_start",@"mode":@"65543",@"duration":@0.5})[@"ok"]boolValue]);
+    assert(downCalls==priorDowns);fakeUnsupported.erase(CrDeviceProperty_SnapshotInfo);
+    puts("PASS: non-LR1 enumerated camera connects; absent optional no-card setting does not block photos; missing burst status never releases shutter.");
+
+    // Simulate changing the camera body switch, without using set_property.
+    setFake(CrDeviceProperty_ExposureProgramMode,CrExposure_Movie_P);
+    call(@{@"action":@"status"});capability=call(@{@"action":@"status"});
+    assert(![capability[@"photoReady"]boolValue]&&[capability[@"connected"]boolValue]);
+    auto logCount=[capability[@"logs"]count];
+    assert([call(@{@"action":@"status"})[@"logs"]count]==logCount);
+    setFake(CrDeviceProperty_ExposureProgramMode,CrExposure_Auto);
+    call(@{@"action":@"status"});capability=call(@{@"action":@"status"});
+    assert([capability[@"photoReady"]boolValue]);
+    fakeReadFailure=CrDeviceProperty_ReleaseWithoutCard;
+    {std::lock_guard<std::mutex> lock(s.mutex);s.configured=false;}
+    assert(![call(@{@"action":@"status"})[@"photoReady"]boolValue]);
+    fakeReadFailure=0;fakeUnsupported.clear();
+    {std::lock_guard<std::mutex> lock(s.mutex);s.configured=false;}
+    capability=call(@{@"action":@"status"});
+    assert([capability[@"photoReady"]boolValue]&&[capability[@"noCardConfirmed"]boolValue]);
+    puts("PASS: external Movie/Still changes recover photo readiness; unchanged failure is not logged repeatedly; SDK errors are not mistaken for absent settings.");
+
+    NSString *configurationMessage=@"";
+    setFake(CrDeviceProperty_FileType,CrFileType_RawJpeg);
+    setFake(CrDeviceProperty_RAW_J_PC_Save_Image,CrPropertyRAWJPCSaveImage_JPEGOnly);
+    setFake(CrDeviceProperty_Still_Image_Trans_Size,CrPropertyStillImageTransSize_SmallSize);
+    assert(configurePC(&configurationMessage));
+    assert(fakeValues[CrDeviceProperty_RAW_J_PC_Save_Image]==CrPropertyRAWJPCSaveImage_RAWAndJPEG);
+    assert(fakeValues[CrDeviceProperty_Still_Image_Trans_Size]==CrPropertyStillImageTransSize_Original);
+    setFake(CrDeviceProperty_FileType,CrFileType_RawHeif);
+    assert(configurePC(&configurationMessage));
+    assert(fakeValues[CrDeviceProperty_RAW_J_PC_Save_Image]==CrPropertyRAWJPCSaveImage_RAWAndHEIF);
+    fakeReadOnly.insert(CrDeviceProperty_RAW_J_PC_Save_Image);
+    fakeReadOnly.insert(CrDeviceProperty_Still_Image_Trans_Size);
+    setFake(CrDeviceProperty_RAW_J_PC_Save_Image,CrPropertyRAWJPCSaveImage_JPEGOnly);
+    assert(configurePC(&configurationMessage));
+    assert(fakeValues[CrDeviceProperty_RAW_J_PC_Save_Image]==CrPropertyRAWJPCSaveImage_JPEGOnly);
+    assert([call(@{@"action":@"shutdown"})[@"ok"]boolValue]);
+    puts("PASS: writable transfer format and image size are aligned; inactive LR1 transfer settings remain untouched.");
     assert([[NSFileManager defaultManager] removeItemAtPath:testDirectory error:nil]);
 }}

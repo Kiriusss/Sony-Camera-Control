@@ -1,12 +1,16 @@
-# LR1 Control
+# Sony Camera Control
 
-用于 Sony ILX-LR1 的 macOS 原生桌面控制软件，使用 SwiftUI 和 Camera Remote SDK 2.02。支持 USB PC Remote 连接、无卡拍照直传、原生连拍与手动调焦。
+面向 Sony Camera Remote SDK 支持机型的 macOS 原生桌面控制软件，使用 SwiftUI 和 Camera Remote SDK 2.02。提供遥控拍摄、照片直传、实时取景、原生连拍和手动调焦。
+
+## 相机兼容性
+
+相机由 SDK 枚举，连接不再限定 ILX-LR1。适用型号参见 [Sony 官方 SDK 支持列表](https://support.d-imaging.sony.co.jp/app/sdk/en/index.html)，例如 ILX-LR1、ILCE-7M4、ILCE-7RM5 和 ZV-E1。可用功能由相机、固件、镜头及当前模式决定。目前实机验证机型为 **ILX-LR1**。
 
 ## 功能
 
 - 搜索和连接相机，显示实时取景。
 - 读取并调整相机当前允许修改的曝光、快门、光圈、ISO、白平衡及照片格式。
-- 无存储卡拍摄，照片按相机格式直接保存到 Mac。
+- 照片按相机格式直接保存到 Mac；支持无卡拍摄的相机可不插存储卡使用。
 - 原生连拍：读取可用档位，支持 0.5–10 秒自动停止及提前停止；每轮独立文件夹，RAW＋JPEG/HEIF 按完整照片计数。
 - 手动对焦：近焦/远焦，细、中、粗步进，指定归一化焦位，实际位置回读和停止调焦。
 - 运行日志及下载记录。
@@ -14,11 +18,11 @@
 
 ## 安装与连接
 
-从本仓库 [Releases](https://github.com/Kiriusss/LR1-Control/releases) 下载 Apple silicon 安装包，解压后打开 `LR1 Control.app`。运行环境为 macOS 13 或更新版本。
+从本仓库 [Releases](https://github.com/Kiriusss/Sony-Camera-Control/releases) 下载 Apple silicon 安装包，解压后打开 `Sony Camera Control.app`。运行系统需满足所使用的 [Sony SDK 系统要求](https://support.d-imaging.sony.co.jp/app/sdk/en/index.html)。
 
-相机接独立电源，使用 USB 数据线连接电脑，并选择 **PC Remote**。软件会检查无卡释放快门及仅电脑保存设置。点击“搜索”和“连接相机”即可。
+相机供电开机后，使用 USB 数据线连接电脑，并选择 **PC Remote**。软件会检查电脑保存设置，并配置相机支持的无卡释放选项。点击“搜索”和“连接相机”即可。
 
-默认照片位置：`~/Pictures/LR1 Captures`。连接超时时，检查“预览”“图像捕捉”及其他相机软件是否占用设备。
+默认照片位置沿用 `~/Pictures/LR1 Captures`，已有保存设置继续生效。连接超时时，检查“预览”“图像捕捉”及其他相机软件是否占用设备。
 
 完整说明见 [使用说明](使用说明.md)。
 
@@ -43,7 +47,7 @@ bash Scripts/test-local-video.sh
 
 桥接测试使用 mock SDK 调用，不连接相机。覆盖连拍文件配对、重复回调、定时停止、回传失败、手动对焦参数与取消、超时，以及首次连接失败清理。
 
-2026-09-22 实机验证：USB PC Remote、无存储卡；两轮 Mid 连拍各 3 张，12 个 RAW/HEIF 文件完整传回，6 个 HEIF 均完整解码为 9504×6336。连拍后单张拍摄正常；近远微调和指定焦位均有实际位置回读。
+2026-09-22 ILX-LR1 实机验证：USB PC Remote、无存储卡；两轮 Mid 连拍各 3 张，12 个 RAW/HEIF 文件完整传回，6 个 HEIF 均完整解码为 9504×6336。连拍后单张拍摄正常；近远微调和指定焦位均有实际位置回读。
 
 ## 代码结构
 

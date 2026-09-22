@@ -35,7 +35,7 @@ struct State {
     std::mutex api, mutex;
     std::condition_variable changed;
     bool initialized = false, connected = false, connecting = false;
-    bool configured = false, recording = false, recordingKnown = false;
+    bool configured = false, recording = false, recordingKnown = false, noCardConfirmed = false;
     bool pendingPhoto = false, captureConfirmed = false, disconnectPending = false, liveViewPrepared = false;
     bool burstActive=false,burstDraining=false,burstReleasePending=false,burstS1Held=false;
     bool burstStopRequested=false,burstQueueComplete=false,burstTimedOut=false;
@@ -69,6 +69,7 @@ struct State {
     NSString *cameraName = @"";
     NSString *saveDirectory = @"";
     NSString *configurationError = @"";
+    std::map<uint32_t,uint64_t> configurationInputs;
     NSString *photoError = @"";
     NSMutableArray *logs = [NSMutableArray array];
     NSMutableArray *downloads = [NSMutableArray array];
@@ -207,7 +208,7 @@ public:
                 ++s.burstID;s.changed.notify_all();
             }
             resetManualFocusLocked();
-            s.recording = false; s.properties = @[];
+            s.recording = false;s.noCardConfirmed=false; s.properties = @[];
             logLocked(error ? [@"相机连接已断开：" stringByAppendingString:errorText(error)] : @"相机连接已断开。", error != 0);
         }
     }
@@ -513,13 +514,16 @@ std::vector<uint64_t> values(const CrDeviceProperty &property) {
     return result;
 }
 
-bool readProperty(uint32_t code, CrDeviceProperty &result) {
+bool readProperty(uint32_t code, CrDeviceProperty &result, bool *unsupported=nullptr) {
+    if(unsupported)*unsupported=false;
     auto &s=state(); CrDeviceProperty *list=nullptr; CrInt32 count=0;
     CrError error=GetSelectDeviceProperties(s.handle,1,&code,&list,&count);
     bool found=false;
     if (!error && list) for (int i=0;i<count;++i) if (list[i].GetCode()==code) { result=list[i]; found=true; break; }
     if (list) ReleaseDeviceProperties(s.handle,list);
-    return found && result.GetPropertyEnableFlag()!=CrEnableValue_NotSupported;
+    bool absent=!error&&(!found||result.GetPropertyEnableFlag()==CrEnableValue_NotSupported);
+    if(unsupported)*unsupported=absent;
+    return found&&!error&&!absent;
 }
 
 bool setValue(uint32_t code,uint64_t value,NSString **message,bool verify=false) {
@@ -725,23 +729,44 @@ bool setDirectory(NSString *directory,NSString **message,bool remember=true) {
 
 bool configurePC(NSString **message) {
     auto &s=state(); NSString *directory;
+    {std::lock_guard<std::mutex> lock(s.mutex);s.noCardConfirmed=false;}
     CrDeviceProperty exposure;
     if(readProperty(CrDeviceProperty_ExposureProgramMode,exposure) && exposure.IsGetEnableCurrentValue()) {
         if(NSString *mode=nonStillExposureLabel(exposure.GetCurrentValue())) {
-            *message=[NSString stringWithFormat:@"相机处于%@模式，请将机身 Still/Movie/S&Q 开关拨到照片（Still），再拍照。",mode];
+            *message=[NSString stringWithFormat:@"相机处于%@模式，请通过机身开关或菜单切换到照片模式后重试。",mode];
             return false;
         }
     }
     {std::lock_guard<std::mutex> lock(s.mutex);directory=s.saveDirectory;}
     if (!setDirectory(directory,message)) return false;
     if (!setValue(CrDeviceProperty_StillImageStoreDestination,CrStillImageStoreDestination_HostPC,message,true)) return false;
-    if (!setValue(CrDeviceProperty_ReleaseWithoutCard,CrReleaseWithoutCard_Enable,message,true)) return false;
+    // This setting is not exposed by every supported Sony camera. Skip only
+    // an explicitly unsupported/absent property, never an SDK read failure.
+    CrDeviceProperty releaseWithoutCard;bool unsupported=false;
+    if(readProperty(CrDeviceProperty_ReleaseWithoutCard,releaseWithoutCard,&unsupported)) {
+        if(!setValue(CrDeviceProperty_ReleaseWithoutCard,CrReleaseWithoutCard_Enable,message,true))return false;
+        std::lock_guard<std::mutex> lock(s.mutex);s.noCardConfirmed=true;
+    } else if(!unsupported) {
+        *message=@"无法读取相机的无卡拍摄设置，尚未确认电脑直传配置。";return false;
+    }
     if (!setValue(CrDeviceProperty_DriveMode,CrDrive_Single,message,true)) return false;
-    // On ILX-LR1, Save Image Size and RAW+J/RAW+H Save Image apply only
-    // to Dest.+Camera. Destination Only transfers the selected photo format;
-    // those inactive properties must not prevent no-card PC capture.
     CrDeviceProperty fileType;
     if (!readProperty(CrDeviceProperty_FileType,fileType) || !fileType.IsGetEnableCurrentValue()) { *message=@"无法确认照片格式。"; return false; }
+    // Some bodies expose an independent PC transfer format. Configure it
+    // only while writable; it is inactive for LR1 Destination Only capture.
+    auto optionalTransferSetting=[&](uint32_t code,uint64_t value) {
+        CrDeviceProperty property;bool absent=false;
+        if(!readProperty(code,property,&absent)) {
+            if(absent)return true;
+            *message=[propertyName(code) stringByAppendingString:@"：无法读取照片回传设置。"];return false;
+        }
+        return !property.IsSetEnableCurrentValue()||setValue(code,value,message,true);
+    };
+    if(!optionalTransferSetting(CrDeviceProperty_Still_Image_Trans_Size,CrPropertyStillImageTransSize_Original))return false;
+    if(fileType.GetCurrentValue()==CrFileType_RawJpeg&&
+       !optionalTransferSetting(CrDeviceProperty_RAW_J_PC_Save_Image,CrPropertyRAWJPCSaveImage_RAWAndJPEG))return false;
+    if(fileType.GetCurrentValue()==CrFileType_RawHeif&&
+       !optionalTransferSetting(CrDeviceProperty_RAW_J_PC_Save_Image,CrPropertyRAWJPCSaveImage_RAWAndHEIF))return false;
     return true;
 }
 
@@ -918,9 +943,24 @@ void refreshProperties() {
         known=v<=CrMovie_Recording_State_IntervalRec_Waiting_Record;
         recording=v==CrMovie_Recording_State_Recording || v==CrMovie_Recording_State_IntervalRec_Waiting_Record;
     }
+    std::map<uint32_t,uint64_t> configurationInputs;
+    for(int i=0;i<count;++i) {
+        const auto &p=list[i];
+        if(p.GetPropertyEnableFlag()!=CrEnableValue_NotSupported&&p.IsGetEnableCurrentValue()&&
+           (p.GetCode()==CrDeviceProperty_ExposureProgramMode||p.GetCode()==CrDeviceProperty_FileType))
+            configurationInputs[p.GetCode()]=p.GetCurrentValue();
+    }
     ReleaseDeviceProperties(s.handle,list);
     std::lock_guard<std::mutex> lock(s.mutex);
-    if (s.connected) {s.properties=[rows copy];s.recordingKnown=known;s.recording=recording;if(!burstBusyLocked())s.burstModes=[burstModes copy];}
+    if (s.connected) {
+        if(!s.pendingPhoto&&!burstBusyLocked()&&!focusBusyLocked()&&!configurationInputs.empty()) {
+            if(!s.configurationInputs.empty()&&s.configurationInputs!=configurationInputs) {
+                s.configured=false;s.noCardConfirmed=false;
+            }
+            s.configurationInputs=std::move(configurationInputs);
+        }
+        s.properties=[rows copy];s.recordingKnown=known;s.recording=recording;if(!burstBusyLocked())s.burstModes=[burstModes copy];
+    }
 }
 
 bool disconnectDevice(NSString **message) {
@@ -930,7 +970,7 @@ bool disconnectDevice(NSString **message) {
     {std::lock_guard<std::mutex> lock(s.mutex);++s.epoch;s.connected=s.connecting=s.configured=s.recordingKnown=s.recording=false;
      if(s.burstDraining){s.burstStatus=@"连接已断开，未确认全部连拍照片回传。";logLocked(s.burstStatus,true);}
      s.burstActive=s.burstDraining=s.burstReleasePending=s.burstS1Held=false;++s.burstID;s.burstModes=@[];s.changed.notify_all();
-     resetManualFocusLocked();s.pendingPhoto=false;s.pendingKinds.clear();s.properties=@[];s.cameraName=@"";s.configurationError=@"";}
+     resetManualFocusLocked();s.pendingPhoto=false;s.pendingKinds.clear();s.properties=@[];s.cameraName=@"";s.noCardConfirmed=false;s.configurationError=@"";s.configurationInputs.clear();}
     if (!handle) return true;
     // Official connect.cpp releases the handle after initial OnError without
     // calling Disconnect when OnConnected never occurred. Keep this distinct
@@ -982,7 +1022,9 @@ void service() {
         // Attempt once per connection; shoot rechecks the entire path.
         if(!s.connected)return;
         s.configured=true;s.configurationError=configured?@"":message;
-        logLocked(configured?@"已确认无卡单张拍摄，照片按相机格式保存到 Mac。":message,!configured);
+        logLocked(configured?(s.noCardConfirmed?@"已确认电脑直传、无卡设置及单张模式；照片按相机格式保存到 Mac。":
+                              @"已确认电脑直传及单张模式；相机未提供无卡设置，是否可无卡拍摄由相机决定。"):
+                              message,!configured);
     }
 }
 
@@ -1047,7 +1089,9 @@ bool action(NSDictionary *request,NSString **message) {
     if ([name isEqual:@"set_save_directory"]) {
         {std::lock_guard<std::mutex> lock(s.mutex);if(s.pendingPhoto) {*message=@"正在下载照片，请完成后再更改文件夹。";return false;}}
         NSString *path=[request[@"path"] isKindOfClass:NSString.class]?request[@"path"]:@"";
-        bool ok=setDirectory(path,message);if(ok)*message=@"已更新照片保存文件夹。";return ok;
+        bool ok=setDirectory(path,message);
+        if(ok){std::lock_guard<std::mutex> lock(s.mutex);s.configured=false;*message=@"已更新照片保存文件夹。";}
+        return ok;
     }
     if(!s.initialized) {*message=@"请先初始化相机 SDK。";return false;}
     if([name isEqual:@"scan"]) {
@@ -1070,8 +1114,9 @@ bool action(NSDictionary *request,NSString **message) {
         NSNumber *index=[request[@"index"] isKindOfClass:NSNumber.class]?request[@"index"]:nil;
         if(!index || index.longLongValue<0 || !s.enumeration || index.unsignedLongLongValue>=s.enumeration->GetCount()) {*message=@"请选择扫描列表中的相机。";return false;}
         auto info=const_cast<ICrCameraObjectInfo*>(s.enumeration->GetCameraObjectInfo(index.unsignedIntValue));
-        // Explicit MovieRecord Down/Up semantics and no-card setup target LR1.
-        if (![text(info->GetModel()).uppercaseString containsString:@"ILX-LR1"]) {*message=@"此工具仅连接 ILX-LR1。";return false;}
+        // The SDK enumerates supported devices; individual operations below
+        // validate the selected camera's properties instead of a model filter.
+        if(!info){*message=@"所选相机信息已失效，请重新搜索。";return false;}
         std::string user([[request[@"user"] isKindOfClass:NSString.class]?request[@"user"]:@"" UTF8String]);
         std::string password([[request[@"password"] isKindOfClass:NSString.class]?request[@"password"]:@"" UTF8String]);
         char fingerprint[512]={0};CrInt32u fingerprintSize=0;
@@ -1087,7 +1132,7 @@ bool action(NSDictionary *request,NSString **message) {
         }
         uint64_t epoch;
         {std::lock_guard<std::mutex> lock(s.mutex);epoch=++s.epoch;s.connecting=true;s.connected=false;s.configured=false;
-         s.cameraName=text(info->GetModel());s.configurationError=@"";s.connectStarted=Clock::now();s.disconnectPending=false;}
+         s.cameraName=text(info->GetModel()).length?text(info->GetModel()):text(info->GetName());s.noCardConfirmed=false;s.configurationError=@"";s.connectStarted=Clock::now();s.disconnectPending=false;}
         auto callback=std::make_unique<Callback>(epoch);s.callback=callback.get();s.callbacks.push_back(std::move(callback));
         CrDeviceHandle handle=0;
         CrError error=Connect(info,s.callback,&handle,CrSdkControlMode_Remote,CrReconnecting_OFF,
@@ -1155,6 +1200,9 @@ bool action(NSDictionary *request,NSString **message) {
         // Sony requires 500 ms after changing ExposureProgramMode before
         // setting related shooting properties. Keep the API queue serialized.
         if(c==CrDeviceProperty_ExposureProgramMode)std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        if(c==CrDeviceProperty_ExposureProgramMode||c==CrDeviceProperty_FileType) {
+            std::lock_guard<std::mutex> lock(s.mutex);s.configured=false;s.noCardConfirmed=false;s.configurationInputs.clear();
+        }
         refreshProperties();if(c==CrDeviceProperty_FocusMode)refreshManualFocus();*message=[propertyName(c) stringByAppendingString:@"已由相机确认。"];return true;
     }
     if([name isEqual:@"autofocus"]) {
@@ -1173,7 +1221,13 @@ bool action(NSDictionary *request,NSString **message) {
         double duration=request[@"duration"]?[request[@"duration"] doubleValue]:1.0;
         if(!std::isfinite(duration)||duration<0.5||duration>10){*message=@"连拍时长须为0.5至10秒。";return false;}
         if(!configurePC(message))return false;
-        CrDeviceProperty shutter,queue,file,focus;
+        CrDeviceProperty shutter,queue,file,focus,s2;
+        if(!readProperty(CrDeviceProperty_S2,s2)||!s2.IsGetEnableCurrentValue()) {
+            *message=@"相机未提供可读取的快门释放状态，当前不能安全使用连拍；仍可尝试单张拍摄。";return false;
+        }
+        if(s2.GetCurrentValue()!=CrLockIndicator_Unlocked) {
+            *message=@"相机快门尚未释放，请稍后开始连拍。";return false;
+        }
         double seconds=readProperty(CrDeviceProperty_ShutterSpeed,shutter)?exposureSeconds(shutter):-1;
         if(seconds<=0||seconds>1){*message=@"开始连拍前需能读取不长于1秒的快门；B门不可用于定时连拍。单张拍摄不受此限制。";return false;}
         if(!readProperty(CrDeviceProperty_SnapshotInfo,queue)||!queue.IsGetEnableCurrentValue()||queue.GetCurrentValue()!=0) {
@@ -1269,6 +1323,11 @@ bool action(NSDictionary *request,NSString **message) {
         *message=@"已发出快门请求，等待相机拍摄及照片文件。";return true;
     }
     if([name isEqual:@"movie_start"] || [name isEqual:@"movie_stop"]) {
+        // MovieRecord is a toggle+button-release on several older bodies.
+        // Keep the legacy native command bounded to its validated model;
+        // the GUI records preview frames locally and does not need this API.
+        {std::lock_guard<std::mutex> lock(s.mutex);
+         if(![s.cameraName.uppercaseString isEqual:@"ILX-LR1"]){*message=@"此机型尚未启用机内录像控制；可使用本地取景录像。";return false;}}
         refreshProperties();bool recording,known;
         {std::lock_guard<std::mutex> lock(s.mutex);recording=s.recording;known=s.recordingKnown;}
         if(!known) {*message=@"相机未提供有效录像状态，未发送录像指令。";return false;}
@@ -1288,6 +1347,7 @@ char *snapshot(bool ok,NSString *message) {
         result=@{@"ok":@(ok),@"message":message ?: @"",@"initialized":@(s.initialized),@"connected":@(s.connected),
                  @"connecting":@(s.connecting),@"cameraName":s.cameraName ?: @"",@"cameras":[s.cameras copy],
                  @"properties":[s.properties copy],@"recording":@(s.recording),@"recordingKnown":@(s.recordingKnown),
+                 @"photoReady":@(s.connected&&s.configured&&!s.configurationError.length),@"noCardConfirmed":@(s.connected&&s.noCardConfirmed),
                  @"pendingPhoto":@(s.pendingPhoto),@"captureConfirmed":@(s.captureConfirmed),
                  @"burstActive":@(s.burstActive),@"burstDraining":@(s.burstDraining),
                  @"burstCaptured":@(s.burstCaptured),@"burstDownloaded":@(s.burstDownloaded),@"burstFiles":@(s.burstFiles),

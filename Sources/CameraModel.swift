@@ -70,6 +70,8 @@ struct CameraSnapshot: Decodable {
     var burstElapsed: Double? = 0
     var burstStatus: String? = ""
     var manualFocus: ManualFocusSnapshot?
+    var photoReady: Bool? = false
+    var noCardConfirmed: Bool? = false
     var cameraName = ""
     var cameras: [CameraDescriptor] = []
     var properties: [CameraProperty] = []
@@ -155,6 +157,7 @@ final class CameraModel: ObservableObject {
     var singlePhotoPending: Bool { snapshot.pendingPhoto == true && !burstActive && !burstDraining }
     var manualFocus: ManualFocusSnapshot { snapshot.manualFocus ?? ManualFocusSnapshot() }
     var canConfigure: Bool { ready && !captureInProgress && !manualFocus.moving }
+    var canShoot: Bool { canConfigure && snapshot.photoReady == true && !snapshot.recording }
     var canSetFocusPosition: Bool {
         guard canConfigure, manualFocus.isMF, manualFocus.positionEnabled,
               let value = Int(focusPositionInput), manualFocus.increment > 0,
@@ -164,7 +167,7 @@ final class CameraModel: ObservableObject {
     }
     var burstModes: [PropertyOption] { snapshot.burstModes ?? [] }
     var canStartBurst: Bool {
-        canConfigure && !snapshot.recording && !localRecording && !finishingVideo &&
+        canShoot && !localRecording && !finishingVideo &&
         burstModes.contains(where: { $0.value == selectedBurstMode })
     }
     var recordingStatus: String {
@@ -321,7 +324,7 @@ final class CameraModel: ObservableObject {
         guard canConfigure, freshLiveView, !localRecording, !finishingVideo else { return }
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyyMMdd_HHmmss"
-        let url = URL(fileURLWithPath: saveDirectory).appendingPathComponent("LR1_Preview_\(formatter.string(from: Date()))_\(UUID().uuidString.prefix(6)).mov")
+        let url = URL(fileURLWithPath: saveDirectory).appendingPathComponent("Sony_Preview_\(formatter.string(from: Date()))_\(UUID().uuidString.prefix(6)).mov")
         videoRecorder.start(at: url) { [weak self] _ in self?.stopMovie() }
         recordingStartedAt = Date()
         recordingSeconds = 0
@@ -375,7 +378,7 @@ final class CameraModel: ObservableObject {
     func exportLog() {
         let panel = NSSavePanel()
         panel.title = "导出运行日志"
-        panel.nameFieldStringValue = "LR1-Control.log"
+        panel.nameFieldStringValue = "Sony-Camera-Control.log"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
             let text = snapshot.logs.map { "\($0.time) [\($0.level)] \($0.message)" }.joined(separator: "\n") + "\n"

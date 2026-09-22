@@ -1,6 +1,6 @@
 # 第三方组件
 
-本应用通过 Sony Camera Remote SDK 2.02 控制 ILX-LR1。SDK 库是 Sony 提供的独立组件，其授权见 [Sony Camera Remote SDK License Agreement](https://support.d-imaging.sony.co.jp/app/sdk/licenseagreement/en.html)。源码仓库不包含 SDK 开发包。
+本应用通过 Sony Camera Remote SDK 2.02 控制 SDK 支持的 Sony 相机。SDK 库是 Sony 提供的独立组件，其授权见 [Sony Camera Remote SDK License Agreement](https://support.d-imaging.sony.co.jp/app/sdk/licenseagreement/en.html)。源码仓库不包含 SDK 开发包。
 
 应用包中保留 SDK 动态库及其目录关系；构建时对库进行本机签名。第三方组件许可分别适用，不因存入本仓库而改变。
 

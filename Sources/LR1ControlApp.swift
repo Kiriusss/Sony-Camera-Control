@@ -69,7 +69,7 @@ struct LR1ControlApp: App {
     @StateObject private var model = CameraModel.shared
 
     var body: some Scene {
-        Window("LR1 Control", id: "main") {
+        Window("Sony Camera Control", id: "main") {
             ControlView()
                 .environmentObject(model)
                 .preferredColorScheme(.dark)
@@ -139,7 +139,7 @@ struct ControlView: View {
                 Image(systemName: "camera.aperture").font(.system(size: 27, weight: .light)).foregroundStyle(Palette.accent)
             }.frame(width: 48, height: 48)
             VStack(alignment: .leading, spacing: 3) {
-                Text("LR1 CONTROL").font(.system(size: 20, weight: .semibold, design: .rounded)).tracking(2)
+                Text("SONY CAMERA CONTROL").font(.system(size: 18, weight: .semibold, design: .rounded)).tracking(2)
                 Text("相机控制台").font(.system(size: 12)).foregroundStyle(Palette.secondary)
             }
             Spacer()
@@ -194,7 +194,7 @@ struct ControlView: View {
                 }.textFieldStyle(.roundedBorder).padding(.top, 8).disabled(model.busy || model.snapshot.connected)
             }.font(.system(size: 12)).foregroundStyle(Palette.secondary)
             if !model.snapshot.connected {
-                Text("用 USB 数据线连接 LR1，并将相机 USB 连接模式设为 PC 遥控。无需存储卡。")
+                Text("用 USB 数据线连接相机，并选择 PC 遥控模式。可用功能按当前相机读取。")
                     .font(.system(size: 12)).lineSpacing(4).foregroundStyle(Palette.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -262,7 +262,7 @@ struct ControlView: View {
                     VStack(spacing: 16) {
                         Image(systemName: "viewfinder").font(.system(size: 52, weight: .ultraLight)).foregroundStyle(Palette.secondary.opacity(0.45))
                         VStack(spacing: 7) {
-                            Text(model.snapshot.connected ? (model.liveViewEnabled ? "等待相机画面" : "取景已暂停") : "等待连接 LR1")
+                            Text(model.snapshot.connected ? (model.liveViewEnabled ? "等待相机画面" : "取景已暂停") : "等待连接相机")
                                 .font(.system(size: 16, weight: .medium))
                             Text(model.snapshot.connected ? "取景画面由相机实时传回" : "连接相机后，在这里查看实时画面")
                                 .font(.system(size: 12)).foregroundStyle(Palette.secondary)
@@ -349,12 +349,13 @@ struct ControlView: View {
                 Text("照片").font(.system(size: 13, weight: .semibold))
                 HStack(spacing: 8) {
                     Button(action: model.shoot) { Label(model.singlePhotoPending ? (model.snapshot.captureConfirmed == true ? "正在传回照片…" : "等待相机拍摄…") : "拍摄照片", systemImage: "camera.fill").frame(maxWidth: .infinity) }
-                        .buttonStyle(AccentButton()).disabled(!model.canConfigure || model.snapshot.recording)
+                        .buttonStyle(AccentButton()).disabled(!model.canShoot)
                     Button(action: model.autofocus) { Text("AF").frame(width: 30) }
                         .buttonStyle(QuietButton()).disabled(!model.canConfigure).help("触发自动对焦")
                         .accessibilityLabel("自动对焦")
                 }
-                Text("无卡拍摄 · 直接传回 Mac").font(.system(size: 11)).foregroundStyle(Palette.secondary)
+                Text(model.snapshot.noCardConfirmed == true ? "无卡拍摄 · 直接传回 Mac" : "照片直接传回 Mac")
+                    .font(.system(size: 11)).foregroundStyle(Palette.secondary)
             }.frame(maxWidth: .infinity)
             Rectangle().fill(Palette.line).frame(width: 1, height: 76)
             VStack(alignment: .leading, spacing: 12) {
@@ -486,10 +487,10 @@ struct ControlView: View {
 
     private var helpSheet: some View {
         VStack(alignment: .leading, spacing: 22) {
-            HStack { Text("连接 LR1").font(.title2.bold()); Spacer(); Button("完成") { model.showHelp = false }.keyboardShortcut(.defaultAction) }
-            helpStep("01", "连接相机", "为 LR1 接好电源，使用可传输数据的 USB 线连接 Mac。相机菜单中的 USB 连接模式选择“PC 遥控”，关闭其他占用相机的遥控软件。")
-            helpStep("02", "搜索并连接", "点击“搜索”，选择发现的 LR1 后连接。使用网络连接时，Mac 与相机应处于同一网络；如启用访问认证，请展开“网络认证”，填写相机菜单中显示的用户名、密码和指纹。")
-            helpStep("03", "设置与拍摄", "参数列表由相机返回；当前模式不允许修改的参数仅显示读数。“AF”触发自动对焦，“拍摄照片”无卡拍摄一张，原始照片直接传到所选 Mac 文件夹；下载完成后显示文件名。")
+            HStack { Text("连接 Sony 相机").font(.title2.bold()); Spacer(); Button("完成") { model.showHelp = false }.keyboardShortcut(.defaultAction) }
+            helpStep("01", "连接相机", "为相机接好电源，使用可传输数据的 USB 线连接 Mac。相机菜单中的 USB 连接模式选择“PC 遥控”，关闭其他占用相机的遥控软件。")
+            helpStep("02", "搜索并连接", "点击“搜索”，选择发现的相机后连接。使用网络连接时，Mac 与相机应处于同一网络；如启用访问认证，请展开“网络认证”，填写相机菜单中显示的用户名、密码和指纹。")
+            helpStep("03", "设置与拍摄", "参数列表由相机返回；当前模式不允许修改的参数仅显示读数。“AF”触发自动对焦，“拍摄照片”拍摄一张，原始照片直接传到所选 Mac 文件夹；下载完成后显示文件名。")
             helpStep("04", "连拍", "选择相机支持的连拍档位和自动停止时间，点击“开始连拍”。可随时点击“停止”；停止拍摄后继续接收照片，RAW＋JPEG/HEIF 两个文件收齐才计为一张完整照片。下载完成后可继续单张拍摄。")
             Text("如果未发现设备，请检查相机供电、USB 模式及数据线；网络连接还需允许 macOS 本地网络访问。详细错误可在“运行日志”中查看。")
                 .font(.system(size: 12)).foregroundStyle(Palette.secondary).lineSpacing(5)

@@ -2,7 +2,7 @@
 set -euo pipefail
 SOURCE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-$SOURCE_DIR/build}"
-APP_PATH="${APP_PATH:-$(dirname "$SOURCE_DIR")/LR1 Control.app}"
+APP_PATH="${APP_PATH:-$(dirname "$SOURCE_DIR")/Sony Camera Control.app}"
 SDK_PATH="${SDK_PATH:-$HOME/Downloads/CrSDK_v2.02.00_20260610a_Mac}"
 ARCH="${ARCH:-$(uname -m)}"
 mkdir -p "$BUILD_DIR"
